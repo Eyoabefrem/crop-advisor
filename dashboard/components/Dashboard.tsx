@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { DashboardData } from "../lib/types";
 
-const BOT_URL = "https://t.me/geberefarmbot"; // update after renaming the bot
+const BOT_URL = "https://t.me/geberefarmbot";
 const TYPES = ["text", "voice", "photo"] as const;
 const COLORS: Record<string, string> = { text: "#1F9D55", voice: "#F5C451", photo: "#F28B66" };
 const TAGTEXT: Record<string, string> = { text: "#137A41", voice: "#8A6A0A", photo: "#C2562F" };
@@ -13,14 +13,22 @@ const LABEL: Record<string, string> = { text: "Text", voice: "Voice", photo: "Ph
 const DAY = 864e5;
 
 function useCount(target: number) {
-  const [v, setV] = useState(0);
+  // Starts at the real value (so server-rendered HTML is correct) and only
+  // animates when the value later changes, e.g. when a filter is switched.
+  const [v, setV] = useState(target);
+  const prev = useRef(target);
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { setV(target); return; }
+    const from = prev.current;
+    prev.current = target;
+    if (from === target || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setV(target);
+      return;
+    }
     let raf = 0;
     const t0 = performance.now();
     const tick = (t: number) => {
-      const p = Math.min(1, (t - t0) / 800);
-      setV(Math.round(target * (1 - Math.pow(1 - p, 3))));
+      const p = Math.min(1, (t - t0) / 700);
+      setV(Math.round(from + (target - from) * (1 - Math.pow(1 - p, 3))));
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -194,8 +202,12 @@ export default function Dashboard({ data }: { data: DashboardData }) {
 
         <div className="card">
           <h2>Recent conversations</h2>
-          <input className="search" placeholder="Search questions and answers…" value={query} onChange={(e) => { setQuery(e.target.value); setOpen(null); }} aria-label="Search conversations" />
-          {feed.length === 0 ? <p className="empty">{data.interactions.some((i) => i.q !== undefined) ? "No matches." : "Nothing to show yet."}</p> : (
+          {data.textHidden ? (
+            <p className="empty">Conversation text is hidden on the public dashboard to protect farmers&apos; privacy. Counts and charts are live.</p>
+          ) : (
+            <input className="search" placeholder="Search questions and answers…" value={query} onChange={(e) => { setQuery(e.target.value); setOpen(null); }} aria-label="Search conversations" />
+          )}
+          {data.textHidden ? null : feed.length === 0 ? <p className="empty">{data.interactions.some((i) => i.q !== undefined) ? "No matches." : "Nothing to show yet."}</p> : (
             <div className="feed">
               {feed.map((r, i) => (
                 <div className={`item ${open === i ? "open" : ""}`} key={r.at + i}>

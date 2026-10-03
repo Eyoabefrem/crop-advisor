@@ -11,4 +11,5 @@ export type DashboardData = {
   farmersWithLocation: number;
   crops: { crop: string; count: number }[];
   interactions: Interaction[];
+  textHidden: boolean;
 };

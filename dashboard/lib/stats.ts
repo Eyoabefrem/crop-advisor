@@ -49,6 +49,7 @@ export async function getData(): Promise<DashboardData> {
     totalInteractions: total.count ?? 0,
     farmersWithLocation: located.count ?? 0,
     crops,
+    textHidden: HIDE_TEXT,
     interactions: (rows.data ?? []).map((r, i) => ({
       type: r.interaction_type,
       at: r.created_at,
