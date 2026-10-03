@@ -9,7 +9,6 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile
 from openai import OpenAI
-from faster_whisper import WhisperModel
 from supabase import create_client, Client
 
 from telegram import (
@@ -99,6 +98,8 @@ def get_whisper_model():
     with whisper_lock:
 
         if whisper_model is None:
+
+            from faster_whisper import WhisperModel  # optional: local dev only
 
             print("Loading Whisper model...")
 
@@ -606,7 +607,7 @@ When professional agricultural help may be useful.
 # TRANSCRIPTION
 # ============================================================
 
-def transcribe_audio(
+def transcribe_local(
     audio_bytes: bytes,
 ) -> str:
 
@@ -649,6 +650,68 @@ def transcribe_audio(
 
 
 # ============================================================
+# TRANSCRIPTION: hosted Whisper (Groq) first, local Whisper as fallback
+# ============================================================
+
+def transcribe_with_groq(
+    audio_bytes: bytes,
+) -> str:
+
+    response = httpx.post(
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        headers={
+            "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"
+        },
+        files={
+            "file": ("voice.ogg", audio_bytes, "audio/ogg"),
+        },
+        data={
+            "model": os.getenv(
+                "GROQ_WHISPER_MODEL",
+                "whisper-large-v3-turbo",
+            ),
+        },
+        timeout=60,
+    )
+
+    response.raise_for_status()
+
+    transcription = response.json().get("text", "").strip()
+
+    print(f"Transcription (Groq): {transcription}")
+
+    return transcription
+
+
+def transcribe_audio(
+    audio_bytes: bytes,
+) -> str:
+
+    use_groq = (
+        bool(os.getenv("GROQ_API_KEY"))
+        and os.getenv("TRANSCRIBE_PROVIDER", "groq").lower() != "local"
+    )
+
+    if use_groq:
+
+        try:
+            return transcribe_with_groq(audio_bytes)
+
+        except Exception as e:
+            print(f"Groq transcription failed: {repr(e)}")
+
+    try:
+        return transcribe_local(audio_bytes)
+
+    except ImportError:
+
+        raise RuntimeError(
+            "No transcription available: Groq failed or is not "
+            "configured, and local faster-whisper is not installed."
+        )
+
+
+# ============================================================
 # FASTAPI ENDPOINTS
 # ============================================================
 
@@ -659,6 +722,12 @@ async def root():
         "message": "Gebere API is running",
         "status": "online",
     }
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health():
+
+    return {"status": "ok"}
 
 
 @app.get("/weather")
