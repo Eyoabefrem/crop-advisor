@@ -9,7 +9,7 @@
 | **Dashboard (live)** | https://geberefarmbot.vercel.app |
 | **Telegram bot** | https://t.me/geberefarmbot |
 
-> **About the live bot:** it runs on a free hosting tier that puts it to sleep after 15 minutes without web traffic, and messaging it does not wake it. To wake it, open `https://YOUR-SERVICE.onrender.com/health`, wait about a minute, then message the bot. The screenshots and demo video below show it working end to end.
+> **About the live bot:** it runs on a free hosting tier that puts it to sleep after 15 minutes without web traffic, and messaging it does not wake it. To wake it, open `https://gebere-crop-advisor.onrender.com/`, wait about a minute, then message the bot. The screenshots and demo video below show it working end to end.
 
 
 ## What it does
