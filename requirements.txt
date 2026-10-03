@@ -1,0 +1,10 @@
+av==15.1.0
+fastapi==0.142.2
+faster-whisper==1.2.1
+httpx==0.27.2
+openai==3.22.1
+python-dotenv==1.1.1
+python-multipart==0.0.32
+python-telegram-bot==22.8
+supabase==2.31.0
+uvicorn==0.54.0
