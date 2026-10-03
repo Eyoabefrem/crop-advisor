@@ -75,7 +75,7 @@ if SUPABASE_URL and SUPABASE_SECRET_KEY:
 # ============================================================
 
 app = FastAPI(
-    title="Crop Advisor",
+    title="Gebere",
     description=(
         "AI agricultural assistant using Telegram, "
         "Whisper, OpenRouter, Open-Meteo and Supabase."
@@ -398,7 +398,7 @@ def generate_advice(
 ) -> str:
 
     prompt = f"""
-You are Crop Advisor, a practical agricultural assistant.
+You are Gebere (ገበሬ), a friendly, practical agronomist who talks with farmers.
 
 The farmer grows:
 {crop}
@@ -410,6 +410,8 @@ Local 7-day weather forecast:
 {weather}
 
 Give practical, concise advice that a farmer can actually use.
+Use simple, plain words and short sentences, like a trusted neighbour.
+Reply in the same language the farmer used.
 
 Use the weather information when relevant.
 
@@ -446,9 +448,9 @@ Keep the answer under 180 words.
                 {
                     "role": "system",
                     "content": (
-                        "You are Crop Advisor, an agricultural "
-                        "assistant. Always answer the user's "
-                        "actual agricultural question."
+                        "You are Gebere, a friendly agronomist. "
+                        "Use simple words. Always answer the "
+                        "farmer's actual agricultural question."
                     ),
                 },
                 {
@@ -476,8 +478,8 @@ Keep the answer under 180 words.
         )
 
         return (
-            "Sorry, I couldn't generate advice right now. "
-            "Please try again."
+            "I couldn't get advice for you just now. "
+            "Please try again in a minute."
         )
 
 
@@ -654,7 +656,7 @@ def transcribe_audio(
 async def root():
 
     return {
-        "message": "Crop Advisor API is running",
+        "message": "Gebere API is running",
         "status": "online",
     }
 
@@ -736,33 +738,67 @@ async def start_command(
 
     user = update.effective_user
 
-    if user is None:
+    if update.message is None or user is None:
         return
 
+    name = user.first_name or "friend"
+
+    await ensure_profile(user.id, context)
+
     farmer_id = await asyncio.to_thread(
-            save_farmer,
+        save_farmer,
         telegram_user_id=user.id,
         username=user.username,
         first_name=user.first_name,
     )
 
-    context.user_data[
-        "farmer_id"
-    ] = farmer_id
+    context.user_data["farmer_id"] = farmer_id
 
-    context.user_data[
-        "waiting_for_crop"
-    ] = True
+    crop = context.user_data.get("crop")
 
-    context.user_data[
-        "waiting_for_location"
-    ] = False
+    has_location = (
+        context.user_data.get("latitude") is not None
+        and context.user_data.get("longitude") is not None
+    )
+
+    # ---------------- returning farmer ----------------
+    if crop:
+
+        context.user_data["waiting_for_crop"] = False
+        context.user_data["waiting_for_location"] = not has_location
+
+        if has_location:
+
+            await update.message.reply_text(
+                f"👋 Welcome back, {name}!\n\n"
+                f"Your farm: {crop} 🌱\n\n"
+                "Send me a question, a voice message 🎤 "
+                "or a photo of your crop 📷.\n\n"
+                "Type /help to see everything I can do."
+            )
+
+        else:
+
+            await update.message.reply_text(
+                f"👋 Welcome back, {name}!\n\n"
+                f"Your farm: {crop} 🌱\n\n"
+                "I still need your farm location to give you "
+                "weather-based advice. Tap the button below.",
+                reply_markup=LOCATION_KEYBOARD,
+            )
+
+        return
+
+    # ---------------- new farmer ----------------
+    context.user_data["waiting_for_crop"] = True
+    context.user_data["waiting_for_location"] = False
 
     await update.message.reply_text(
-        "🌱 Welcome to Crop Advisor!\n\n"
-        "I can help you with crop questions, "
-        "weather-based advice, and crop photo analysis.\n\n"
-        "First, what crop are you growing?"
+        f"🌱 Welcome to Gebere (ገበሬ), {name}!\n\n"
+        "I'm your pocket agronomist. Ask me about your crops by "
+        "typing, sending a voice message 🎤 or a photo of a leaf 📷. "
+        "I use your local 7-day weather to give practical advice.\n\n"
+        "Let's set up your farm. What crop do you grow?"
     )
 
 
@@ -822,10 +858,10 @@ async def handle_text(
         ] = True
 
         await update.message.reply_text(
-            f"Great — I'll help you with {crop}.\n\n"
-            "Now please share your farm location using "
-            "Telegram's location button so I can use your "
-            "local 7-day weather forecast.",
+            f"Great, {crop} it is! 🌱\n\n"
+            "One more thing: tap the button below to share your "
+            "farm location. I'll use it to check your local "
+            "7-day weather before I give advice.",
             reply_markup=LOCATION_KEYBOARD,
         )
 
@@ -867,7 +903,7 @@ async def handle_text(
         )
 
     await update.message.reply_text(
-        "🌱 Thinking..."
+        "🌱 Let me look at that..."
     )
 
     advice = await asyncio.to_thread(
@@ -998,8 +1034,7 @@ async def handle_voice(
     )
 
     await update.message.reply_text(
-        "🎤 I received your voice message. "
-        "Transcribing..."
+        "🎤 Got your voice message. Listening..."
     )
 
     try:
@@ -1024,8 +1059,8 @@ async def handle_voice(
         if not transcription:
 
             await update.message.reply_text(
-                "I couldn't understand the voice message. "
-                "Please try again."
+                "I couldn't hear that clearly. Could you try again, "
+                "a little closer to the phone?"
             )
 
             return
@@ -1056,7 +1091,7 @@ async def handle_voice(
 
         await update.message.reply_text(
             f"📝 I heard:\n{transcription}\n\n"
-            "🌱 Generating advice..."
+            "🌱 Preparing your advice..."
         )
 
         advice = await asyncio.to_thread(
@@ -1105,8 +1140,8 @@ async def handle_voice(
         )
 
         await update.message.reply_text(
-            "Sorry, something went wrong while "
-            "processing your voice message."
+            "Sorry, I had trouble with that voice message. "
+            "Please try again, or type your question."
         )
 
 
@@ -1135,7 +1170,7 @@ async def handle_photo(
     )
 
     await update.message.reply_text(
-        "📷 I'm analyzing the crop photo..."
+        "📷 Looking closely at your photo..."
     )
 
     try:
@@ -1203,7 +1238,7 @@ async def handle_photo(
         )
 
         await update.message.reply_text(
-            "Sorry, I couldn't analyze that photo. "
+            "Sorry, I couldn't look at that photo. "
             "Please try sending it again."
         )
 
@@ -1232,9 +1267,9 @@ async def ensure_profile(
     telegram_user_id: int,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    """Reload crop/location from Supabase after a server restart."""
+    """Load crop/location from Supabase once per session (e.g. after a restart)."""
 
-    if context.user_data.get("farmer_id"):
+    if context.user_data.get("profile_loaded"):
         return
 
     farmer = await asyncio.to_thread(
@@ -1243,18 +1278,20 @@ async def ensure_profile(
     )
 
     if not farmer:
-        return
+        return  # not found (or lookup failed): try again on the next message
 
+    context.user_data["profile_loaded"] = True
     context.user_data["farmer_id"] = farmer["id"]
 
+    # setdefault: never overwrite something the farmer just typed this session
     if farmer.get("crop"):
-        context.user_data["crop"] = farmer["crop"]
+        context.user_data.setdefault("crop", farmer["crop"])
 
     if farmer.get("latitude") is not None:
-        context.user_data["latitude"] = farmer["latitude"]
+        context.user_data.setdefault("latitude", farmer["latitude"])
 
     if farmer.get("longitude") is not None:
-        context.user_data["longitude"] = farmer["longitude"]
+        context.user_data.setdefault("longitude", farmer["longitude"])
 
 
 async def help_command(
@@ -1266,7 +1303,7 @@ async def help_command(
         return
 
     await update.message.reply_text(
-        "🌱 Crop Advisor: your agronomist in your pocket\n\n"
+        "🌱 Gebere (ገበሬ): your agronomist in your pocket\n\n"
         "Ask me anything about your crop:\n"
         "• Type a question\n"
         "• Send a voice message 🎤\n"
@@ -1467,7 +1504,7 @@ async def lifespan(
 
     global telegram_app
 
-    print("Starting Crop Advisor...")
+    print("Starting Gebere...")
 
     if not OPENROUTER_API_KEY:
         print(
@@ -1500,11 +1537,11 @@ async def lifespan(
     await telegram_app.updater.start_polling()
 
     print("Telegram bot is running.")
-    print("Crop Advisor API is running.")
+    print("Gebere API is running.")
 
     yield
 
-    print("Stopping Crop Advisor...")
+    print("Stopping Gebere...")
 
     if telegram_app.updater:
         await telegram_app.updater.stop()
@@ -1513,7 +1550,7 @@ async def lifespan(
 
     await telegram_app.shutdown()
 
-    print("Crop Advisor stopped.")
+    print("Gebere stopped.")
 
 
 # ============================================================
