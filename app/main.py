@@ -1,6 +1,8 @@
+import asyncio
 import os
 import base64
 import tempfile
+import threading
 from contextlib import asynccontextmanager
 
 import httpx
@@ -10,7 +12,12 @@ from openai import OpenAI
 from faster_whisper import WhisperModel
 from supabase import create_client, Client
 
-from telegram import Update
+from telegram import (
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -82,23 +89,26 @@ app = FastAPI(
 # ============================================================
 
 whisper_model = None
+whisper_lock = threading.Lock()
 
 
 def get_whisper_model():
 
     global whisper_model
 
-    if whisper_model is None:
+    with whisper_lock:
 
-        print("Loading Whisper model...")
+        if whisper_model is None:
 
-        whisper_model = WhisperModel(
-            "tiny",
-            device="cpu",
-            compute_type="int8",
-        )
+            print("Loading Whisper model...")
 
-        print("Whisper model loaded.")
+            whisper_model = WhisperModel(
+                "tiny",
+                device="cpu",
+                compute_type="int8",
+            )
+
+            print("Whisper model loaded.")
 
     return whisper_model
 
@@ -267,6 +277,36 @@ def save_interaction(
         print(
             f"SUPABASE INTERACTION ERROR: {repr(e)}"
         )
+
+
+# ============================================================
+# SUPABASE - LOAD PROFILE
+# ============================================================
+
+def get_farmer(telegram_user_id: int) -> dict | None:
+
+    if supabase is None:
+        return None
+
+    try:
+
+        response = (
+            supabase
+            .table("farmers")
+            .select("id, crop, latitude, longitude")
+            .eq("telegram_user_id", telegram_user_id)
+            .limit(1)
+            .execute()
+        )
+
+        if response.data:
+            return response.data[0]
+
+    except Exception as e:
+
+        print(f"SUPABASE GET FARMER ERROR: {repr(e)}")
+
+    return None
 
 
 # ============================================================
@@ -644,7 +684,8 @@ async def transcribe(
 
     audio_bytes = await file.read()
 
-    transcription = transcribe_audio(
+    transcription = await asyncio.to_thread(
+            transcribe_audio,
         audio_bytes
     )
 
@@ -666,7 +707,8 @@ async def ask(
         longitude,
     )
 
-    advice = generate_advice(
+    advice = await asyncio.to_thread(
+            generate_advice,
         crop,
         question,
         forecast,
@@ -697,7 +739,8 @@ async def start_command(
     if user is None:
         return
 
-    farmer_id = save_farmer(
+    farmer_id = await asyncio.to_thread(
+            save_farmer,
         telegram_user_id=user.id,
         username=user.username,
         first_name=user.first_name,
@@ -740,6 +783,8 @@ async def handle_text(
     if user is None:
         return
 
+    await ensure_profile(user.id, context)
+
     message = update.message.text.strip()
 
     # --------------------------------------------------------
@@ -752,7 +797,8 @@ async def handle_text(
 
         crop = message
 
-        farmer_id = save_farmer(
+        farmer_id = await asyncio.to_thread(
+            save_farmer,
             telegram_user_id=user.id,
             username=user.username,
             first_name=user.first_name,
@@ -779,7 +825,8 @@ async def handle_text(
             f"Great — I'll help you with {crop}.\n\n"
             "Now please share your farm location using "
             "Telegram's location button so I can use your "
-            "local 7-day weather forecast."
+            "local 7-day weather forecast.",
+            reply_markup=LOCATION_KEYBOARD,
         )
 
         return
@@ -823,7 +870,8 @@ async def handle_text(
         "🌱 Thinking..."
     )
 
-    advice = generate_advice(
+    advice = await asyncio.to_thread(
+            generate_advice,
         crop,
         message,
         weather,
@@ -835,7 +883,8 @@ async def handle_text(
 
     if farmer_id is None:
 
-        farmer_id = save_farmer(
+        farmer_id = await asyncio.to_thread(
+            save_farmer,
             telegram_user_id=user.id,
             username=user.username,
             first_name=user.first_name,
@@ -848,7 +897,8 @@ async def handle_text(
             "farmer_id"
         ] = farmer_id
 
-    save_interaction(
+    await asyncio.to_thread(
+            save_interaction,
         farmer_id=farmer_id,
         interaction_type="text",
         user_message=message,
@@ -894,7 +944,8 @@ async def handle_location(
         "crop"
     )
 
-    farmer_id = save_farmer(
+    farmer_id = await asyncio.to_thread(
+            save_farmer,
         telegram_user_id=user.id,
         username=user.username,
         first_name=user.first_name,
@@ -917,7 +968,8 @@ async def handle_location(
         "• Ask me a crop question\n"
         "• Send me a voice question 🎤\n"
         "• Send me a crop photo 📷\n\n"
-        "I'll use your local weather when giving advice."
+        "I'll use your local weather when giving advice.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -937,6 +989,8 @@ async def handle_voice(
 
     if user is None:
         return
+
+    await ensure_profile(user.id, context)
 
     crop = context.user_data.get(
         "crop",
@@ -962,7 +1016,8 @@ async def handle_voice(
             await telegram_file.download_as_bytearray()
         )
 
-        transcription = transcribe_audio(
+        transcription = await asyncio.to_thread(
+            transcribe_audio,
             bytes(audio_bytes)
         )
 
@@ -1004,7 +1059,8 @@ async def handle_voice(
             "🌱 Generating advice..."
         )
 
-        advice = generate_advice(
+        advice = await asyncio.to_thread(
+            generate_advice,
             crop,
             transcription,
             weather,
@@ -1016,7 +1072,8 @@ async def handle_voice(
 
         if farmer_id is None:
 
-            farmer_id = save_farmer(
+            farmer_id = await asyncio.to_thread(
+            save_farmer,
                 telegram_user_id=user.id,
                 username=user.username,
                 first_name=user.first_name,
@@ -1029,7 +1086,8 @@ async def handle_voice(
                 "farmer_id"
             ] = farmer_id
 
-        save_interaction(
+        await asyncio.to_thread(
+            save_interaction,
             farmer_id=farmer_id,
             interaction_type="voice",
             user_message=transcription,
@@ -1069,6 +1127,8 @@ async def handle_photo(
     if user is None:
         return
 
+    await ensure_profile(user.id, context)
+
     crop = context.user_data.get(
         "crop",
         "unknown crop",
@@ -1092,7 +1152,8 @@ async def handle_photo(
             await telegram_file.download_as_bytearray()
         )
 
-        analysis = analyze_crop_image(
+        analysis = await asyncio.to_thread(
+            analyze_crop_image,
             crop,
             bytes(image_bytes),
         )
@@ -1103,7 +1164,8 @@ async def handle_photo(
 
         if farmer_id is None:
 
-            farmer_id = save_farmer(
+            farmer_id = await asyncio.to_thread(
+            save_farmer,
                 telegram_user_id=user.id,
                 username=user.username,
                 first_name=user.first_name,
@@ -1120,7 +1182,8 @@ async def handle_photo(
                 "farmer_id"
             ] = farmer_id
 
-        save_interaction(
+        await asyncio.to_thread(
+            save_interaction,
             farmer_id=farmer_id,
             interaction_type="photo",
             user_message=(
@@ -1146,6 +1209,190 @@ async def handle_photo(
 
 
 # ============================================================
+# PROFILE + COMMANDS
+# ============================================================
+
+LOCATION_KEYBOARD = ReplyKeyboardMarkup(
+    [[KeyboardButton("📍 Share my farm location", request_location=True)]],
+    resize_keyboard=True,
+    one_time_keyboard=True,
+)
+
+BOT_COMMANDS = [
+    ("start", "Set up your farm profile"),
+    ("help", "What I can do"),
+    ("profile", "See your saved crop and location"),
+    ("weather", "7-day forecast for your farm"),
+    ("setcrop", "Change your crop"),
+    ("setlocation", "Update your farm location"),
+]
+
+
+async def ensure_profile(
+    telegram_user_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """Reload crop/location from Supabase after a server restart."""
+
+    if context.user_data.get("farmer_id"):
+        return
+
+    farmer = await asyncio.to_thread(
+        get_farmer,
+        telegram_user_id,
+    )
+
+    if not farmer:
+        return
+
+    context.user_data["farmer_id"] = farmer["id"]
+
+    if farmer.get("crop"):
+        context.user_data["crop"] = farmer["crop"]
+
+    if farmer.get("latitude") is not None:
+        context.user_data["latitude"] = farmer["latitude"]
+
+    if farmer.get("longitude") is not None:
+        context.user_data["longitude"] = farmer["longitude"]
+
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if update.message is None:
+        return
+
+    await update.message.reply_text(
+        "🌱 Crop Advisor: your agronomist in your pocket\n\n"
+        "Ask me anything about your crop:\n"
+        "• Type a question\n"
+        "• Send a voice message 🎤\n"
+        "• Send a photo of a leaf or plant 📷\n\n"
+        "Commands:\n"
+        "/profile: your saved crop and location\n"
+        "/weather: 7-day forecast for your farm\n"
+        "/setcrop: change your crop\n"
+        "/setlocation: update your farm location\n\n"
+        "I give practical guidance, not a diagnosis. For serious "
+        "crop losses, also talk to a local agricultural extension officer."
+    )
+
+
+async def profile_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    user = update.effective_user
+
+    if update.message is None or user is None:
+        return
+
+    await ensure_profile(user.id, context)
+
+    crop = context.user_data.get("crop")
+    lat = context.user_data.get("latitude")
+    lon = context.user_data.get("longitude")
+
+    if lat is not None and lon is not None:
+        location = f"✅ saved ({lat:.2f}, {lon:.2f})"
+    else:
+        location = "❌ not set (use /setlocation)"
+
+    await update.message.reply_text(
+        "👤 Your farm profile\n\n"
+        f"Crop: {crop or '❌ not set (use /setcrop)'}\n"
+        f"Location: {location}"
+    )
+
+
+async def weather_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    user = update.effective_user
+
+    if update.message is None or user is None:
+        return
+
+    await ensure_profile(user.id, context)
+
+    lat = context.user_data.get("latitude")
+    lon = context.user_data.get("longitude")
+
+    if lat is None or lon is None:
+
+        await update.message.reply_text(
+            "I don't have your farm location yet. "
+            "Tap the button to share it.",
+            reply_markup=LOCATION_KEYBOARD,
+        )
+
+        return
+
+    forecast = await get_weather(lat, lon)
+
+    await update.message.reply_text(
+        "🌦 7-day forecast for your farm:\n\n" + forecast
+    )
+
+
+async def setcrop_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if update.message is None:
+        return
+
+    context.user_data["waiting_for_crop"] = True
+
+    await update.message.reply_text(
+        "Which crop are you growing now?"
+    )
+
+
+async def setlocation_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if update.message is None:
+        return
+
+    context.user_data["waiting_for_location"] = True
+
+    await update.message.reply_text(
+        "Tap the button below to share your farm location.",
+        reply_markup=LOCATION_KEYBOARD,
+    )
+
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    print(f"Telegram error: {repr(context.error)}")
+
+    if isinstance(update, Update) and update.effective_message:
+
+        try:
+
+            await update.effective_message.reply_text(
+                "Sorry, something went wrong on my side. "
+                "Please try again in a moment."
+            )
+
+        except Exception:
+            pass
+
+
+# ============================================================
 # TELEGRAM APPLICATION
 # ============================================================
 
@@ -1154,6 +1401,7 @@ def create_telegram_application():
     application = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(True)
         .build()
     )
 
@@ -1163,6 +1411,19 @@ def create_telegram_application():
             start_command,
         )
     )
+
+    for command, handler in (
+        ("help", help_command),
+        ("profile", profile_command),
+        ("weather", weather_command),
+        ("setcrop", setcrop_command),
+        ("setlocation", setlocation_command),
+    ):
+        application.add_handler(
+            CommandHandler(command, handler)
+        )
+
+    application.add_error_handler(error_handler)
 
     application.add_handler(
         MessageHandler(
@@ -1231,6 +1492,8 @@ async def lifespan(
     telegram_app = create_telegram_application()
 
     await telegram_app.initialize()
+
+    await telegram_app.bot.set_my_commands(BOT_COMMANDS)
 
     await telegram_app.start()
 
